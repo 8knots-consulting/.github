@@ -1,11 +1,16 @@
 name: Node CI
 
 # Reusable workflow consumed by every 8knots app. Gates: lint (optional),
-# typecheck, build. No tests yet — those can be added per-app later.
+# typecheck, test (optional), build (optional).
 #
 # Why a reusable workflow: all apps run the same stack (Next.js 16 + TS
 # strict + Node 22). Centralizing avoids drift between repos and means a
 # single place to bump Node, add cache hits, or extend the matrix.
+#
+# Auth for GitHub Packages: NPM_TOKEN is set from secrets.GITHUB_TOKEN
+# during install. Consumers consuming @8knots-consulting/* need to declare
+# `permissions: { packages: read, contents: read }` in their calling
+# workflow.
 #
 # Consumer example (in any app repo, e.g. recharge/.github/workflows/ci.yml):
 #
@@ -14,13 +19,17 @@ name: Node CI
 #     pull_request:
 #     push:
 #       branches: [main]
+#   permissions:
+#     contents: read
+#     packages: read
 #   jobs:
 #     ci:
 #       uses: 8knots-consulting/.github/.github/workflows/node-ci.yml@main
 #       with:
 #         node-version: "22"
 #         package-manager: npm
-#         run-lint: false
+#         run-lint: true
+#         run-test: true
 
 on:
   workflow_call:
@@ -37,6 +46,10 @@ on:
         description: Run lint step. Some apps don't have a lint script yet.
         type: boolean
         default: true
+      run-test:
+        description: Run test step. Apps without tests should set this to false.
+        type: boolean
+        default: false
       run-build:
         description: Run build step (next build).
         type: boolean
@@ -72,10 +85,14 @@ jobs:
 
       - name: Install (npm)
         if: inputs.package-manager == 'npm'
+        env:
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm ci
 
       - name: Install (pnpm)
         if: inputs.package-manager == 'pnpm'
+        env:
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: pnpm install --frozen-lockfile
 
       - name: Lint
@@ -85,6 +102,12 @@ jobs:
       - name: Typecheck
         run: ${{ inputs.package-manager }} run typecheck
 
+      - name: Test
+        if: inputs.run-test
+        run: ${{ inputs.package-manager }} run test
+
       - name: Build
         if: inputs.run-build
+        env:
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ${{ inputs.package-manager }} run build
