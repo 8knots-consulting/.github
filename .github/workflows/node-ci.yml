@@ -1,0 +1,90 @@
+name: Node CI
+
+# Reusable workflow consumed by every 8knots app. Gates: lint (optional),
+# typecheck, build. No tests yet — those can be added per-app later.
+#
+# Why a reusable workflow: all apps run the same stack (Next.js 16 + TS
+# strict + Node 22). Centralizing avoids drift between repos and means a
+# single place to bump Node, add cache hits, or extend the matrix.
+#
+# Consumer example (in any app repo, e.g. recharge/.github/workflows/ci.yml):
+#
+#   name: CI
+#   on:
+#     pull_request:
+#     push:
+#       branches: [main]
+#   jobs:
+#     ci:
+#       uses: 8knots-consulting/.github/.github/workflows/node-ci.yml@main
+#       with:
+#         node-version: "22"
+#         package-manager: npm
+#         run-lint: false
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: Node version to use.
+        type: string
+        default: "22"
+      package-manager:
+        description: 'Package manager: "npm" or "pnpm".'
+        type: string
+        default: npm
+      run-lint:
+        description: Run lint step. Some apps don't have a lint script yet.
+        type: boolean
+        default: true
+      run-build:
+        description: Run build step (next build).
+        type: boolean
+        default: true
+      working-directory:
+        description: Subdirectory to run all steps in (monorepo support).
+        type: string
+        default: .
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm (if requested)
+        if: inputs.package-manager == 'pnpm'
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node ${{ inputs.node-version }}
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: ${{ inputs.package-manager }}
+          cache-dependency-path: |
+            ${{ inputs.working-directory }}/package-lock.json
+            ${{ inputs.working-directory }}/pnpm-lock.yaml
+
+      - name: Install (npm)
+        if: inputs.package-manager == 'npm'
+        run: npm ci
+
+      - name: Install (pnpm)
+        if: inputs.package-manager == 'pnpm'
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        if: inputs.run-lint
+        run: ${{ inputs.package-manager }} run lint
+
+      - name: Typecheck
+        run: ${{ inputs.package-manager }} run typecheck
+
+      - name: Build
+        if: inputs.run-build
+        run: ${{ inputs.package-manager }} run build
