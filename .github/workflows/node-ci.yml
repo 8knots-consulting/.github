@@ -58,6 +58,15 @@ on:
         description: Subdirectory to run all steps in (monorepo support).
         type: string
         default: .
+      install-command:
+        description: >-
+          Override für den Install-Step. Leer (Default) → `npm ci` bzw.
+          `pnpm install --frozen-lockfile`. Apps mit lockfile-Quirks
+          (z. B. Mac-generierte Lockfiles mit lightningcss-darwin-arm64-
+          Plattform-Constraints, die Linux-Build crashen) übersteuern
+          das mit `npm install --no-audit --no-fund`.
+        type: string
+        default: ""
 
 jobs:
   ci:
@@ -87,13 +96,13 @@ jobs:
         if: inputs.package-manager == 'npm'
         env:
           NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm ci
+        run: ${{ inputs.install-command || 'npm ci' }}
 
       - name: Install (pnpm)
         if: inputs.package-manager == 'pnpm'
         env:
           NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm install --frozen-lockfile
+        run: ${{ inputs.install-command || 'pnpm install --frozen-lockfile' }}
 
       - name: Lint
         if: inputs.run-lint
