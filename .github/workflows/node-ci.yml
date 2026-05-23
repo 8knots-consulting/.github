@@ -67,6 +67,13 @@ on:
           das mit `npm install --no-audit --no-fund`.
         type: string
         default: ""
+      run-gitleaks:
+        description: >-
+          Gitleaks-Secret-Scan auf der Working-Tree und Git-History.
+          Default true. Bei Funden Build-Fail. Repo-spezifische
+          False-Positives via `.gitleaksignore` im Repo-Root ignorieren.
+        type: boolean
+        default: true
 
 jobs:
   ci:
@@ -78,6 +85,26 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # gitleaks braucht volle History für detect-mode
+
+      - name: Gitleaks (Secret-Scan)
+        if: inputs.run-gitleaks
+        run: |
+          set -euo pipefail
+          GITLEAKS_VERSION="8.21.2"
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /tmp gitleaks
+          /tmp/gitleaks detect \
+            --source . \
+            --redact \
+            --verbose \
+            --exit-code 1 \
+            --report-format sarif \
+            --report-path gitleaks-report.sarif || {
+              echo "::error::Gitleaks fand Secrets im Repo. Siehe Output oben. False-Positives via .gitleaksignore im Repo-Root taggen."
+              exit 1
+            }
 
       - name: Setup pnpm (if requested)
         if: inputs.package-manager == 'pnpm'
