@@ -74,6 +74,20 @@ on:
           False-Positives via `.gitleaksignore` im Repo-Root ignorieren.
         type: boolean
         default: true
+      run-trivy:
+        description: >-
+          Trivy-Filesystem-Scan (Vuln + Misconfig + Secret-Detector,
+          severity HIGH/CRITICAL). Default true. Bei Funden Build-Fail.
+          Repo-Ignores via `.trivyignore` im Repo-Root.
+        type: boolean
+        default: true
+      run-npm-audit:
+        description: >-
+          npm/pnpm audit als Gate (production-only, audit-level high).
+          Default true. Bei vulns Build-Fail. Override per `.npmaudit-allowlist`
+          ist NICHT eingebaut — bei False-Positives manuell justieren.
+        type: boolean
+        default: true
 
 jobs:
   ci:
@@ -106,6 +120,23 @@ jobs:
               exit 1
             }
 
+      - name: Trivy (Vuln + Misconfig Scan)
+        if: inputs.run-trivy
+        run: |
+          set -euo pipefail
+          TRIVY_VERSION="0.58.2"
+          curl -sSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+            | tar -xz -C /tmp trivy
+          /tmp/trivy fs \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            --no-progress \
+            --scanners vuln,misconfig,secret \
+            . || {
+              echo "::error::Trivy fand HIGH/CRITICAL Findings. False-Positives via .trivyignore im Repo-Root taggen."
+              exit 1
+            }
+
       - name: Setup pnpm (if requested)
         if: inputs.package-manager == 'pnpm'
         uses: pnpm/action-setup@v4
@@ -130,6 +161,15 @@ jobs:
         env:
           NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ${{ inputs.install-command || 'pnpm install --frozen-lockfile' }}
+
+      - name: Audit (production deps, high+)
+        if: inputs.run-npm-audit
+        run: |
+          if [ "${{ inputs.package-manager }}" = "pnpm" ]; then
+            pnpm audit --audit-level high --prod
+          else
+            npm audit --omit=dev --audit-level=high
+          fi
 
       - name: Lint
         if: inputs.run-lint
