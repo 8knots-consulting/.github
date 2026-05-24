@@ -1,0 +1,14 @@
+# Org-Level Repo — Reusable Workflows + Org-Profile + Org-Defaults.
+#
+# Aktiv: nur die Default-Zeile. Die auskommentierten Persona-Zeilen
+# dokumentieren das Domain-Mapping für künftige Teams. Uncomment sobald
+# die Teams im Org-UI angelegt sind.
+
+# Default
+*                              @konradbotos
+
+# --- Future Teams (Stufe-0-Follow-up) ---
+#
+# /.github/workflows/**              @8knots-consulting/architecture
+# /.github/pull_request_template.md  @8knots-consulting/architecture
+# /.github/ISSUE_TEMPLATE/**         @8knots-consulting/architecture
