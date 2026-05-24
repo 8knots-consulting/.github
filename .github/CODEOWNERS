@@ -1,0 +1,10 @@
+# Org-Level Repo — Reusable Workflows + Org-Profile.
+# CODEOWNERS gilt für Änderungen am .github-Repo selbst.
+
+# Default
+*                              @konrad-botos
+
+# Architecture: Reusable Workflows + Org-Defaults sind cross-app-Pattern.
+/.github/workflows/**          @konrad-architecture
+/.github/pull_request_template.md  @konrad-architecture
+/.github/ISSUE_TEMPLATE/**     @konrad-architecture
