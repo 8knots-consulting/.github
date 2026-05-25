@@ -30,6 +30,9 @@ name: Node CI
 #         package-manager: npm
 #         run-lint: true
 #         run-test: true
+#         # Optional (Plan-Doc 19 §2.3): Coverage-Report als CI-Artifact.
+#         # Sichtbarkeit-only, kein Gate. Aktivierung per App nach Pilot.
+#         run-coverage: true
 
 on:
   workflow_call:
@@ -88,6 +91,15 @@ on:
           ist NICHT eingebaut — bei False-Positives manuell justieren.
         type: boolean
         default: true
+      run-coverage:
+        description: >-
+          Coverage-Report während des Test-Steps via `c8` (lcov + text).
+          Sichtbarkeit, kein Gate (Plan-Doc 19 §2.3). Setzt voraus, dass
+          `run-test: true`. Artifact `coverage-report` wird hochgeladen.
+          c8 wird per `npx --yes` on-the-fly geholt — keine Anpassung
+          in der App nötig.
+        type: boolean
+        default: false
 
 jobs:
   ci:
@@ -179,8 +191,32 @@ jobs:
         run: ${{ inputs.package-manager }} run typecheck
 
       - name: Test
-        if: inputs.run-test
+        if: inputs.run-test && !inputs.run-coverage
         run: ${{ inputs.package-manager }} run test
+
+      - name: Test (with coverage via c8)
+        if: inputs.run-test && inputs.run-coverage
+        # c8 wickelt den `<pkg-manager> run test`-Befehl ein und
+        # produziert lcov + text-Reports unter `coverage/`. `npx --yes`
+        # zieht c8 ad-hoc — keine zusätzliche devDep in der App nötig.
+        # Pattern funktioniert mit Node-Test, Vitest, Jest etc., solange
+        # der `test`-Script Node-Code ausführt.
+        run: |
+          npx --yes c8@latest \
+            --reporter=lcov --reporter=text \
+            --reports-dir=coverage \
+            ${{ inputs.package-manager }} run test
+
+      - name: Upload coverage report
+        # `always() && X` zwingt den Step auch nach failing test zu
+        # laufen, damit partielle Coverage-Data nicht verloren geht.
+        if: always() && inputs.run-test && inputs.run-coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: ${{ inputs.working-directory }}/coverage/
+          retention-days: 14
+          if-no-files-found: warn
 
       - name: Build
         if: inputs.run-build
