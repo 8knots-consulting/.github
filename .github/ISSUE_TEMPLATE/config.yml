@@ -1,5 +1,11 @@
-blank_issues_enabled: true
+# false = kein Blank-Issue möglich -> erzwingt Templates -> erzwingt die DoR-Pflichtfelder.
+blank_issues_enabled: false
 contact_links:
+  - name: 🟣 Produkt-Intake (Stakeholder/Idee) → Linear
+    # TODO(5.1): echte Linear-Workspace-URL eintragen. Source of Truth ist Linear;
+    # gut geformte Tickets werden von dort nach GitHub gespiegelt (siehe one/docs/26).
+    url: https://linear.app/8knots
+    about: Feature-Wünsche/Ideen von Stakeholdern bitte in Linear erfassen — von dort gegroomt und nach GitHub gespiegelt.
   - name: Security-Roadmap
     url: https://github.com/8knots-consulting/one/blob/main/docs/15-security-roadmap.md
     about: Für Security-Themen ggf. zuerst in der Roadmap-Doc Kontext suchen.
