@@ -1,0 +1,82 @@
+name: 📗 Story / Feature
+description: Neue Funktion als User Story — mit eingebauten Definition-of-Ready-Feldern.
+title: "story: "
+labels: ["type:story", "status:triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Das Ticket ist der Vertrag.** Ein Agent baut, was hier steht — nicht, was
+        gemeint war. Je schärfer die Acceptance Criteria, desto besser das Ergebnis.
+        Felder mit `*` sind Pflicht und Teil der **Definition of Ready** (siehe
+        `intranet/docs/26`). `status:ready` setzt erst der Product-Owner-Agent nach DoR-Check.
+  - type: textarea
+    id: story
+    attributes:
+      label: User Story *
+      description: Im Format „Als <Rolle> möchte ich <Ziel>, damit <Nutzen>".
+      placeholder: "Als Buchhalter möchte ich abgelehnte Belege filtern, damit ich Rückfragen schneller finde."
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria *
+      description: Testbare Stichpunkte. Jeder Punkt muss durch Test/Smoke/manuelle Prüfung beweisbar sein. Nicht „funktioniert gut".
+      value: |
+        - [ ]
+        - [ ]
+        - [ ]
+    validations:
+      required: true
+  - type: dropdown
+    id: app
+    attributes:
+      label: App *
+      options:
+        - intranet
+        - expense
+        - liqui
+        - recharge
+        - timesheets
+        - cross-app
+        - keine / shared
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area (Persona) *
+      description: Welche Rolle besitzt das Ticket? Bestimmt das Pickup-Label.
+      options:
+        - feature
+        - architecture
+        - ux
+        - security
+        - product
+    validations:
+      required: true
+  - type: input
+    id: verification
+    attributes:
+      label: Verifikations-Methode *
+      description: Was beweist „fertig"? Konkreter Test / E2E / Smoke / manueller Schritt.
+      placeholder: "E2E expense/e2e/approve.spec.ts: Filter zeigt nur status=rejected"
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope-Check *
+      options:
+        - label: Das ist eine PR-große Einheit (sonst als Epic anlegen und splitten).
+          required: true
+        - label: Kein bewusster Cross-Area-Drift (sonst Sub-Issues pro Area).
+          required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Out-of-scope / Anmerkungen / Dependencies
+      description: Was bewusst NICHT Teil ist; shared-package-Bump nötig? Odoo-Side-Setup?
+    validations:
+      required: false

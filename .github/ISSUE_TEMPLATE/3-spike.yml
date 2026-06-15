@@ -1,0 +1,57 @@
+name: 🔬 Spike / Investigation
+description: Zeitlich begrenzte Untersuchung, um eine Entscheidung oder einen Bau zu entsperren.
+title: "spike: "
+labels: ["type:spike", "status:triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ein Spike liefert **Wissen, keinen Production-Code**. Er ist erfolgreich,
+        wenn die Frage beantwortet ist — nicht wenn etwas gebaut wurde. Pflichtfelder = `*`.
+  - type: textarea
+    id: question
+    attributes:
+      label: Zu beantwortende Frage *
+      placeholder: "Reicht Linears native GitHub-Integration für den Label-Mirror oder brauchen wir einen Sync-Agent?"
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Warum jetzt / welche Entscheidung entsperrt das? *
+      description: Ohne entsperrtes Folge-Ticket ist der Spike meist verfrüht.
+    validations:
+      required: true
+  - type: dropdown
+    id: timebox
+    attributes:
+      label: Timebox *
+      description: "Harte Obergrenze. Bei Überschreitung: Zwischenstand + neuer Spike/Story."
+      options:
+        - 2h
+        - 4h
+        - 1 Tag
+        - 2 Tage
+    validations:
+      required: true
+  - type: textarea
+    id: dod
+    attributes:
+      label: Definition of Done (Artefakt) *
+      description: Was liegt am Ende vor? ADR / Prototyp / Empfehlung / Optionen-Vergleich.
+    validations:
+      required: true
+  - type: dropdown
+    id: app
+    attributes:
+      label: App / Bereich
+      options:
+        - intranet
+        - expense
+        - liqui
+        - recharge
+        - timesheets
+        - cross-app / infra
+        - keine
+    validations:
+      required: false

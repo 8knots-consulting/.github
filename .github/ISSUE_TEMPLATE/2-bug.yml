@@ -1,0 +1,73 @@
+name: 🐛 Bug
+description: Fehlverhalten auf einer bestehenden Lösung — reproduzierbar gemeldet.
+title: "bug: "
+labels: ["type:bug", "status:triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ein Bug ohne Repro-Schritte ist eine Vermutung. Der Triage/QA-Agent
+        reproduziert zuerst — gib ihm genug, um das zu können. Pflichtfelder = `*`.
+  - type: dropdown
+    id: app
+    attributes:
+      label: App *
+      options:
+        - intranet
+        - expense
+        - liqui
+        - recharge
+        - timesheets
+        - cross-app
+        - unklar
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Repro-Schritte *
+      description: Nummerierte Schritte, mit denen sich der Fehler zuverlässig auslösen lässt.
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Erwartetes Verhalten *
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Tatsächliches Verhalten *
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity *
+      description: Mappt auf priority — der Triage-Agent bestätigt/korrigiert.
+      options:
+        - "critical — Produktion kaputt / Datenverlust / Security (→ p0)"
+        - "high — Kernfunktion unbrauchbar, kein Workaround (→ p1)"
+        - "medium — Funktion eingeschränkt, Workaround existiert (→ p2)"
+        - "low — kosmetisch / selten (→ p3)"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Umgebung / Version
+      description: Browser, betroffener Deploy/SHA, Odoo-Seite involviert?
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Screenshots
+      description: Konsolen-/Server-Log, Sentry-Link, Screenshot. Keine Secrets einkleben.
+    validations:
+      required: false
