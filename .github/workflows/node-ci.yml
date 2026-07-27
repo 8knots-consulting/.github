@@ -7,6 +7,25 @@ name: Node CI
 # strict + Node 22). Centralizing avoids drift between repos and means a
 # single place to bump Node, add cache hits, or extend the matrix.
 #
+# Zwei Klassen von Gates, bewusst getrennt (8KN-48):
+#
+#   1. Code-Korrektheit — Lint, Typecheck, Test, Build, plus Gitleaks und
+#      Trivys Misconfig-/Secret-Regeln. Das Ergebnis hängt nur am Commit:
+#      derselbe Commit liefert morgen dasselbe Ergebnis. Diese Gates
+#      blocken unbedingt.
+#   2. Supply-Chain-Findings — Vulnerabilities aus einer Advisory-DB, die
+#      bei jedem Lauf neu geladen wird. Das Ergebnis hängt am Commit *und
+#      am Datum*: ein am Montag grüner Commit ist am Freitag rot, ohne
+#      dass sich eine Zeile geändert hat. Diese Findings blocken nur,
+#      wenn der PR sie *neu einführt* — gemessen als Diff gegen den
+#      Base-Branch im selben Job, also gegen dieselbe DB-Version.
+#
+# Konsequenz für Menschen und Agents: „CI grün" ist eine Aussage über
+# Lint, Typecheck, Test und Build. Ein Scanner-Finding, das nicht aus dem
+# eigenen Diff stammt, wird nicht im eigenen PR gefixt, sondern als
+# eigenes Ticket gemeldet. Alt-Findings stehen als Warning im
+# Job-Summary; in Tickets übersetzt sie der Sweep aus 8KN-41.
+#
 # Auth for GitHub Packages: NPM_TOKEN is set from secrets.GITHUB_TOKEN
 # during install. Consumers consuming @8knots-consulting/* need to declare
 # `permissions: { packages: read, contents: read }` in their calling
@@ -24,7 +43,9 @@ name: Node CI
 #     packages: read
 #   jobs:
 #     ci:
-#       uses: 8knots-consulting/.github/.github/workflows/node-ci.yml@main
+#       # Immer auf SHA pinnen, nie @main (8KN-31): unpinned ändert ein
+#       # Commit hier sofort das Gate aller Consumer gleichzeitig.
+#       uses: 8knots-consulting/.github/.github/workflows/node-ci.yml@<sha>
 #       with:
 #         node-version: "22"
 #         package-manager: npm
@@ -80,15 +101,28 @@ on:
       run-trivy:
         description: >-
           Trivy-Filesystem-Scan (Vuln + Misconfig + Secret-Detector,
-          severity HIGH/CRITICAL). Default true. Bei Funden Build-Fail.
+          severity HIGH/CRITICAL). Default true.
+
+          Misconfig- und Secret-Findings blocken unbedingt — diese Regeln
+          liegen im gepinnten Trivy-Binary und sind nicht zeitabhängig.
+
+          Vulnerabilities blocken nur, wenn der PR sie neu einführt
+          (Diff gegen `pull_request.base.sha` bzw. `github.event.before`,
+          beide Scans im selben Job und damit gegen dieselbe Advisory-DB).
+          Alt-Findings erscheinen als Warning im Job-Summary. Begründung
+          im Header-Kommentar und in 8KN-48.
+
           Repo-Ignores via `.trivyignore` im Repo-Root.
         type: boolean
         default: true
       run-npm-audit:
         description: >-
-          npm/pnpm audit als Gate (production-only, audit-level high).
-          Default true. Bei vulns Build-Fail. Override per `.npmaudit-allowlist`
-          ist NICHT eingebaut — bei False-Positives manuell justieren.
+          npm/pnpm audit als Bericht im Job-Summary — **kein Gate mehr**
+          (8KN-48). `audit` fragt die Registry-Advisories bei jedem Lauf
+          neu ab, ist also genauso zeitabhängig wie der Vuln-Scan, hat
+          aber weder Diff-Mechanismus noch Ignore-File. Das blockierende
+          Vuln-Gate ist der Trivy-Schritt; er liest dieselbe Advisory-Lage
+          aus dem Lockfile und blockt neu eingeführte Findings.
         type: boolean
         default: true
       run-coverage:
@@ -132,22 +166,186 @@ jobs:
               exit 1
             }
 
-      - name: Trivy (Vuln + Misconfig Scan)
+      # Blockt neu eingeführte Vulnerabilities, nicht die Uhrzeit (8KN-48).
+      # Der Head-Scan lädt die Advisory-DB, der Base-Scan läuft mit
+      # --skip-db-update gegen genau denselben DB-Stand — sonst wäre der
+      # Diff wieder zeitabhängig.
+      - name: Trivy (Vuln-Diff gegen Base, Misconfig/Secret hart)
         if: inputs.run-trivy
+        env:
+          TRIVY_VERSION: "0.70.0"
+          # Bei pull_request der Merge-Base-Stand, bei push der Vorgänger-
+          # Commit. Bei allen anderen Events leer → kein Diff möglich.
+          BASE_SHA: >-
+            ${{ github.event_name == 'pull_request'
+                && github.event.pull_request.base.sha
+                || github.event.before }}
         run: |
           set -euo pipefail
-          TRIVY_VERSION="0.70.0"
+
           curl -sSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
             | tar -xz -C /tmp trivy
-          /tmp/trivy fs \
-            --severity HIGH,CRITICAL \
-            --exit-code 1 \
-            --no-progress \
-            --scanners vuln,misconfig,secret \
-            . || {
-              echo "::error::Trivy fand HIGH/CRITICAL Findings. False-Positives via .trivyignore im Repo-Root taggen."
-              exit 1
-            }
+
+          scan() {  # $1 = Pfad, $2 = Output-JSON, $3 = zusätzliche Flags
+            # shellcheck disable=SC2086
+            /tmp/trivy fs \
+              --severity HIGH,CRITICAL \
+              --no-progress \
+              --format json \
+              --output "$2" \
+              --scanners vuln,misconfig,secret \
+              $3 "$1"
+          }
+
+          # Schlüssel ohne installierte Version: „dasselbe Advisory im
+          # selben Paket" soll auch dann als bekannt gelten, wenn der PR
+          # das Paket auf eine andere, ebenfalls verwundbare Version hebt.
+          vuln_keys() {
+            jq -r '[.Results[]? | .Target as $t | (.Vulnerabilities // [])[]
+                    | "\($t)|\(.PkgName)|\(.VulnerabilityID)"] | unique | .[]' "$1" \
+              | LC_ALL=C sort -u
+          }
+
+          scan . /tmp/trivy-head.json ""
+
+          BASE_STATE=none
+          if [ -n "${BASE_SHA:-}" ] && [ "$BASE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+              git fetch --no-tags --quiet origin "$BASE_SHA" 2>/dev/null || true
+            fi
+            if git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+              git worktree add --detach --quiet /tmp/trivy-base "$BASE_SHA"
+              scan "/tmp/trivy-base/${{ inputs.working-directory }}" /tmp/trivy-base.json --skip-db-update
+              git worktree remove --force /tmp/trivy-base
+              BASE_STATE=ok
+            else
+              BASE_STATE=missing
+            fi
+          fi
+
+          vuln_keys /tmp/trivy-head.json > /tmp/head-keys.txt
+          if [ "$BASE_STATE" = ok ]; then
+            vuln_keys /tmp/trivy-base.json > /tmp/base-keys.txt
+          else
+            # Kein Base-Vergleich möglich → fail closed: jedes Finding gilt
+            # als neu. Lieber ein lautes, erklärbares Rot als ein still
+            # abgeschaltetes Gate.
+            : > /tmp/base-keys.txt
+          fi
+
+          comm -13 /tmp/base-keys.txt /tmp/head-keys.txt > /tmp/new-keys.txt
+          comm -12 /tmp/base-keys.txt /tmp/head-keys.txt > /tmp/old-keys.txt
+          NEW_COUNT=$(wc -l < /tmp/new-keys.txt | tr -d ' ')
+          OLD_COUNT=$(wc -l < /tmp/old-keys.txt | tr -d ' ')
+
+          jq -r '.Results[]? | .Target as $t | (.Vulnerabilities // [])[]
+                 | [ "\($t)|\(.PkgName)|\(.VulnerabilityID)",
+                     .Severity, .PkgName, (.InstalledVersion // "?"),
+                     (.FixedVersion // "kein Fix"), .VulnerabilityID,
+                     ((.Title // .VulnerabilityID) | gsub("\\|"; "/")) ]
+                 | @tsv' /tmp/trivy-head.json | LC_ALL=C sort -u > /tmp/detail.tsv
+
+          table() {  # $1 = Keyfile
+            echo "| Severity | Paket | installiert | Fix | ID | Titel |"
+            echo "|---|---|---|---|---|---|"
+            awk -F'\t' 'NR==FNR{k[$0];next} $1 in k {
+              printf "| %s | %s | %s | %s | %s | %s |\n", $2,$3,$4,$5,$6,$7 }' \
+              "$1" /tmp/detail.tsv
+          }
+
+          MISCONF=$(jq '[.Results[]? | (.Misconfigurations // [])[]] | length' /tmp/trivy-head.json)
+          SECRETS=$(jq '[.Results[]? | (.Secrets // [])[]] | length' /tmp/trivy-head.json)
+
+          # Drei Fälle, und sie unterscheiden sich in dem, was sie
+          # überhaupt behaupten können:
+          #   ok      — Base gescannt, „neu" ist eine belastbare Aussage.
+          #   missing — Base benannt, aber nicht erreichbar. Etwas ist
+          #             kaputt, also fail closed statt still weichgespült.
+          #   none    — das Event hat keinen Base-Begriff (workflow_dispatch,
+          #             schedule). Ohne Diff ist „neu" nicht entscheidbar;
+          #             blocken wäre genau die Zeitabhängigkeit zurück.
+          #             Also lauter Bericht, kein Gate.
+          case "$BASE_STATE" in
+            ok)
+              BASE_LABEL="Base \`${BASE_SHA:0:7}\`"
+              NEW_LABEL="neu eingeführte Vulnerabilities"
+              NEW_BLOCKS="ja" ;;
+            missing)
+              BASE_LABEL="Base \`${BASE_SHA:0:7}\` **nicht erreichbar** — fail closed"
+              NEW_LABEL="Vulnerabilities (ohne Base-Vergleich alle als neu gewertet)"
+              NEW_BLOCKS="ja" ;;
+            none)
+              BASE_LABEL="kein Base-Commit für Event \`${GITHUB_EVENT_NAME:-?}\` — Bericht ohne Gate"
+              NEW_LABEL="Vulnerabilities (kein Base-Vergleich möglich)"
+              NEW_BLOCKS="nein" ;;
+          esac
+
+          {
+            echo "## Trivy (HIGH/CRITICAL)"
+            echo
+            echo "$BASE_LABEL"
+            echo
+            echo "| Klasse | Anzahl | blockt |"
+            echo "|---|---|---|"
+            echo "| $NEW_LABEL | $NEW_COUNT | $NEW_BLOCKS |"
+            if [ "$BASE_STATE" = ok ]; then
+              echo "| schon auf dem Base-Branch | $OLD_COUNT | nein |"
+            fi
+            echo "| Misconfigurations | $MISCONF | ja |"
+            echo "| Secrets | $SECRETS | ja |"
+            echo
+            if [ "$NEW_COUNT" -gt 0 ]; then
+              if [ "$BASE_STATE" = ok ]; then
+                echo "### Neu in diesem Diff — das ist deine Arbeit"
+              else
+                echo "### Gefundene Vulnerabilities"
+              fi
+              echo
+              table /tmp/new-keys.txt
+              echo
+            fi
+            if [ "$BASE_STATE" = ok ] && [ "$OLD_COUNT" -gt 0 ]; then
+              echo "### Schon auf dem Base-Branch — nicht in diesem PR fixen"
+              echo
+              echo "Diese Findings lagen bereits vor diesem PR auf dem Base-Branch."
+              echo "Sie blocken hier nicht und gehören in ein eigenes Ticket"
+              echo "(\`area:security\`), nicht in diesen Diff."
+              echo
+              table /tmp/old-keys.txt
+              echo
+            fi
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+
+          FAIL=0
+
+          # Nicht zeitabhängig, blockt immer: Regeln aus dem gepinnten Binary.
+          if [ "$MISCONF" -gt 0 ] || [ "$SECRETS" -gt 0 ]; then
+            echo "::error::Trivy: $MISCONF Misconfig- und $SECRETS Secret-Finding(s). Diese Regeln stecken im gepinnten Trivy-Binary, sind nicht zeitabhängig und blocken unabhängig vom Base-Branch. False-Positives via .trivyignore im Repo-Root."
+            FAIL=1
+          fi
+
+          case "$BASE_STATE" in
+            ok)
+              if [ "$NEW_COUNT" -gt 0 ]; then
+                echo "::error::Trivy: $NEW_COUNT neu eingeführte HIGH/CRITICAL-Vulnerability(s) gegenüber dem Base-Branch. Tabelle im Job-Summary."
+                FAIL=1
+              fi
+              if [ "$OLD_COUNT" -gt 0 ]; then
+                echo "::warning::Trivy: $OLD_COUNT HIGH/CRITICAL-Finding(s) lagen schon auf dem Base-Branch und blocken diesen PR nicht. Eigenes Ticket, nicht dieser Diff."
+              fi
+              ;;
+            missing)
+              echo "::error::Base-Commit $BASE_SHA ist im Checkout nicht erreichbar, der Vuln-Diff lässt sich nicht bilden. Fail closed: alle $NEW_COUNT Findings gelten als neu. Prüfe fetch-depth im Checkout-Step."
+              FAIL=1
+              ;;
+            none)
+              if [ "$NEW_COUNT" -gt 0 ]; then
+                echo "::warning::Trivy: $NEW_COUNT HIGH/CRITICAL-Vulnerability(s) gefunden. Event \`${GITHUB_EVENT_NAME:-?}\` hat keinen Base-Commit, also keinen Diff — der Vuln-Teil blockt hier deshalb nicht. Ticket-Kanal ist der Sweep aus 8KN-41."
+              fi
+              ;;
+          esac
+
+          exit $FAIL
 
       - name: Setup pnpm (if requested)
         if: inputs.package-manager == 'pnpm'
@@ -174,14 +372,27 @@ jobs:
           NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ${{ inputs.install-command || 'pnpm install --frozen-lockfile' }}
 
-      - name: Audit (production deps, high+)
+      # Bericht, kein Gate (8KN-48): `audit` fragt die Registry-Advisories
+      # bei jedem Lauf neu ab und ist damit genauso zeitabhängig wie der
+      # Vuln-Scan, hat aber keinen Diff und kein Ignore-File. Das
+      # blockierende Vuln-Gate ist der Trivy-Schritt oben.
+      - name: Audit (production deps, high+) — Bericht
         if: inputs.run-npm-audit
         run: |
+          set -uo pipefail
           if [ "${{ inputs.package-manager }}" = "pnpm" ]; then
-            pnpm audit --audit-level high --prod
+            pnpm audit --audit-level high --prod > /tmp/audit.txt 2>&1 || true
           else
-            npm audit --omit=dev --audit-level=high
+            npm audit --omit=dev --audit-level=high > /tmp/audit.txt 2>&1 || true
           fi
+          cat /tmp/audit.txt
+          {
+            echo "## ${{ inputs.package-manager }} audit (Bericht, kein Gate)"
+            echo
+            echo '```'
+            tail -60 /tmp/audit.txt
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
 
       - name: Lint
         if: inputs.run-lint
