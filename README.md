@@ -7,6 +7,13 @@ README.
   reusable lint + typecheck + build workflow for all 8knots apps.
 - [`profile/README.md`](profile/README.md) — shown on the org page at
   https://github.com/8knots-consulting.
+- [`scripts/sync-labels.sh`](scripts/sync-labels.sh) — rollt die
+  Routing-Taxonomie (`area:`/`app:`/`type:`/`priority:`/`status:`) in alle
+  aktiven Repos aus. Idempotent.
+- [`docs/label-policy.md`](docs/label-policy.md) — **warum** diese Labels
+  Pflicht sind und wie die Pflicht durchgesetzt wird (8KN-30). Kurzfassung:
+  ein unlabeled Issue ist für Agents unsichtbar, und genau daran ist eine
+  Live-App mit 9 HIGH-Advisories durch den Sweep gefallen.
 
 ## Wiring an app
 

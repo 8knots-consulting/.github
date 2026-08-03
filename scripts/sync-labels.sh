@@ -9,9 +9,19 @@
 set -euo pipefail
 
 ORG=8knots-consulting
-REPOS=("${@:-one expense liqui recharge odoo-timesheets shared ki}")
+# Alle AKTIVEN Repos. `ki` ist raus (archiviert 2026-05 — `gh label create`
+# scheitert auf archivierten Repos). Ergänzt 2026-08-03 (8KN-30): die vier
+# Repos ohne Taxonomie (immo, itto-agent, n8n, monitoring-dashboard) plus
+# `.github` und `devteam` — `.github` trägt die Cross-Repo-Backlog-Issues
+# (#3 Audit-Backlog, #5 CSP-Cutoff) und war bislang selbst untaxonomiert.
+DEFAULT_REPOS=(
+  one expense liqui recharge odoo-timesheets shared
+  immo itto-agent n8n monitoring-dashboard monitoring
+  .github devteam
+)
+REPOS=("${@:-${DEFAULT_REPOS[@]}}")
 # Wenn ohne Argumente aufgerufen, expandiert ${@:-...} zu einem String -> splitten:
-[ "$#" -eq 0 ] && REPOS=(one expense liqui recharge odoo-timesheets shared ki)
+[ "$#" -eq 0 ] && REPOS=("${DEFAULT_REPOS[@]}")
 
 # name|color|description
 LABELS=(
@@ -27,6 +37,21 @@ LABELS=(
   "app:liqui|C5DEF5|Betrifft liqui"
   "app:recharge|C5DEF5|Betrifft recharge"
   "app:timesheets|C5DEF5|Betrifft odoo-timesheets"
+  # Ergänzt 2026-08-03 (8KN-30). Ohne diese Werte sind Issues zu den Repos
+  # nicht routbar — genau daran ist 8KN-47 vorbeigelaufen: das Sweep-Issue
+  # trug kein `app:monitoring`, also blieb monitoring-dashboard mit 4 offenen
+  # HIGH-Advisories unsichtbar (siehe 8KN-78).
+  "app:immo|C5DEF5|Betrifft immo (Kompass)"
+  "app:itto-agent|C5DEF5|Betrifft itto-agent (Ingo)"
+  "app:n8n|C5DEF5|Betrifft n8n (Workflows, Rechnungsimport)"
+  # Bewusst präzise beschrieben: es gibt ZWEI monitoring-Repos. `app:monitoring`
+  # meint die Next.js-App `monitoring-dashboard`, NICHT den Traefik/Uptime-Kuma-
+  # Stack im Repo `monitoring`. Für letzteren `app:monitoring-stack`.
+  "app:monitoring|C5DEF5|Betrifft monitoring-dashboard (die Next.js-App)"
+  "app:monitoring-stack|C5DEF5|Betrifft das Repo monitoring (Traefik + Uptime-Kuma)"
+  # `shared` fehlte, obwohl es Consumer-übergreifend bricht (z.B. 8KN-68,
+  # flakiger Test in shared/auth — war unlabeled und damit nicht routbar).
+  "app:shared|C5DEF5|Betrifft shared (Packages: auth, odoo)"
   # --- type (Form/Workitem-Art)
   "type:story|0E8A16|User Story / Feature"
   "type:bug|D73A4A|Fehlverhalten"
