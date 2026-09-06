@@ -1,0 +1,167 @@
+name: Tag Release
+
+# Reusable workflow: legt bei Push auf main einen Tag für die Version aus
+# `package.json` an, falls es ihn noch nicht gibt.
+#
+# ## Warum überhaupt
+#
+# Bis Mitte 2026 lief der Bump über `npm version`, und das taggt selbst.
+# Seit der Bump in den Feature-Commit gewandert ist, riss die Kette ab —
+# nachweisbar an den Daten (Stand 2026-09-06):
+#
+#   intranet    0.7.8   Tag v0.7.8    synchron  (nutzt noch `npm version`)
+#   timesheets  0.10.5  Tag v0.10.5   synchron  (dito)
+#   liqui       0.7.1   Tag v0.7.1    synchron  (dito)
+#   expense     0.16.0  Tag v0.13.7   drei Versionen Drift
+#   recharge    1.0.0   Tag v0.1.0    Drift
+#
+# Genau die Repos sind synchron, in denen noch getaggt wird. Das ist kein
+# Disziplinproblem, sondern ein fehlender Automatismus.
+#
+# ## Warum nicht release-please / semantic-release
+#
+# Diese Tools bündeln Releases in einem Release-PR und entkoppeln damit
+# Version von Deploy. Der 8knots-Stack deployt aber **jeden Merge auf
+# main** — es gäbe dauernd ausgelieferte, aber unveröffentlichte Versionen,
+# und der Tag hinkte dem Live-Stand hinterher. Hier gilt „jeder Merge ist
+# ein Release", also folgt der Tag dem Deploy, statt ihn zu steuern.
+#
+# Der Bump selbst bleibt bewusst manuell im Feature-PR: nur der Autor weiß,
+# ob eine Änderung patch, minor oder major ist. Dieser Workflow macht das
+# Ergebnis sichtbar, er trifft die Entscheidung nicht.
+#
+# ## Idempotent statt änderungsgetrieben
+#
+# Der Workflow vergleicht NICHT mit dem Vorgänger-Commit, sondern fragt:
+# „gibt es für die Version in package.json schon einen Tag?". Das ist
+# robuster — ein fehlgeschlagener Lauf, ein Force-Push oder ein
+# nachgezogener Bump holen sich beim nächsten Push von selbst wieder ein.
+# Und beim allerersten Einsatz in einem Repo entsteht der fehlende Tag
+# nebenbei.
+#
+# ## Kein Deploy-Loop
+#
+# Der Push des Tags läuft mit `GITHUB_TOKEN`, und Pushes mit diesem Token
+# lösen keine weiteren Workflows aus. Der Deploy feuert also nicht erneut.
+# Das ist hier erwünscht — dieselbe Eigenschaft ist anderswo eine Falle
+# (siehe „Dependabot-Auto-Merge deployt NICHT" in den Ops-Gotchas).
+#
+# ## Consumer-Beispiel
+#
+#   name: Tag Release
+#   on:
+#     push:
+#       branches: [main]
+#   permissions:
+#     contents: write          # Tag + Release anlegen
+#   jobs:
+#     tag:
+#       uses: 8knots-consulting/.github/.github/workflows/tag-release.yml@<sha>
+#
+# Wie bei `node-ci.yml` bitte auf einen SHA pinnen, nicht auf @main — ein
+# Commit hier würde sonst sofort das Verhalten aller Consumer ändern
+# (8KN-31).
+
+on:
+  workflow_call:
+    inputs:
+      version-file:
+        description: 'Datei, aus der die Version gelesen wird.'
+        type: string
+        default: package.json
+      tag-prefix:
+        description: 'Präfix vor der Version, z. B. "v" für v1.2.3.'
+        type: string
+        default: v
+      create-release:
+        description: 'Zusätzlich ein GitHub Release anlegen?'
+        type: boolean
+        default: true
+    outputs:
+      tag:
+        description: 'Der angelegte Tag, leer wenn er schon existierte.'
+        value: ${{ jobs.tag.outputs.tag }}
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.decide.outputs.tag }}
+    steps:
+      # fetch-depth: 0 — wir müssen ALLE vorhandenen Tags sehen, sonst
+      # legt der Workflow einen an, den es längst gibt, und scheitert am
+      # Push.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: decide
+        name: Version lesen und prüfen, ob der Tag schon existiert
+        env:
+          VERSION_FILE: ${{ inputs.version-file }}
+          TAG_PREFIX: ${{ inputs.tag-prefix }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -f "$VERSION_FILE" ]; then
+            echo "::error::$VERSION_FILE nicht gefunden — kein Tag angelegt."
+            exit 1
+          fi
+
+          VERSION="$(node -p "require('./$VERSION_FILE').version || ''")"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "undefined" ]; then
+            echo "::error::Keine Version in $VERSION_FILE — kein Tag angelegt."
+            exit 1
+          fi
+
+          TAG="${TAG_PREFIX}${VERSION}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "Tag $TAG existiert bereits — nichts zu tun."
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "### Tag \`$TAG\` existiert bereits" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Tag anlegen und pushen
+        if: steps.decide.outputs.tag != ''
+        env:
+          TAG: ${{ steps.decide.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Annotiert, nicht leichtgewichtig: ein annotierter Tag trägt
+          # Autor, Datum und Nachricht und taucht in `git describe` auf.
+          SUBJECT="$(git log -1 --pretty=%s)"
+          git tag -a "$TAG" -m "$TAG" -m "$SUBJECT"
+          git push origin "refs/tags/$TAG"
+
+          {
+            echo "### Tag \`$TAG\` angelegt"
+            echo
+            echo "auf \`$(git rev-parse --short HEAD)\` — $SUBJECT"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: GitHub Release anlegen
+        if: steps.decide.outputs.tag != '' && inputs.create-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.decide.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Notes aus dem Commit, nicht generiert: die Commit-Messages in
+          # diesem Stack sind ausführlich und erklären das Warum. Ein
+          # generiertes Changelog aus Betreffzeilen wäre schlechter als
+          # das, was ohnehin dasteht.
+          {
+            git log -1 --pretty=%s
+            echo
+            git log -1 --pretty=%b
+          } > /tmp/release-notes.md
+          gh release create "$TAG" --title "$TAG" --notes-file /tmp/release-notes.md
